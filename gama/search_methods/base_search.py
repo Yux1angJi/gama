@@ -87,6 +87,12 @@ class BaseSearch(ABC):
         """
         raise NotImplementedError("Must be implemented by child class.")
 
+    def clear_history(self):
+        """ Clear the searching history.
+        Sets `output` field to be initial.
+        """
+        self.output: List[Individual] = []
+
 
 def _check_base_search_hyperparameters(
     toolbox, output: List[Individual], start_candidates: List[Individual]

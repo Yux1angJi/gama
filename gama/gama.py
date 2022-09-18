@@ -103,7 +103,10 @@ class Gama(ABC):
         output_directory: Optional[str] = None,
         store: str = "logs",
         online_learning: bool = False,
-        online_scoring: str = 'accuracy'
+        online_scoring: str = 'accuracy',
+        diversity: bool = False,
+        diversity_phi: float = 0.3,
+        exist_pipelines: Optional[List[Any]] = None,
     ):
         """
 
@@ -176,6 +179,15 @@ class Gama(ABC):
 
         online_learning: bool (default=False)
             If True, GAMA runs on online_learning mode with River pipelines.
+
+        diversity: bool (default=False)
+            If True, take account of diversity while searching evaluating individuals.
+
+        diversity_phi: float (default=0.05)
+            The weight of diversity while evaluating pipelines.
+
+        exist_pipelines: List[Any], optional (default=None)
+            A list of existing pipeline.
         """
         if not output_directory:
             output_directory = f"gama_{str(uuid.uuid4())}"
@@ -245,6 +257,9 @@ class Gama(ABC):
         self._post_processing = post_processing
         self._store = store
         self._online_learning = online_learning
+        self._diversity = diversity
+        self._diversity_phi = diversity_phi
+        self._exist_pipelines = exist_pipelines
 
         if not self._online_learning:
             self._compiler = gama.genetic_programming.compilers.scikitlearn
@@ -736,9 +751,16 @@ class Gama(ABC):
             x=self._x,
             y_train=self._y,
             metrics=self._metrics,
+            diversity=self._diversity,
+            exist_pipelines=self._exist_pipelines,
         )
 
-        AsyncEvaluator.defaults = dict(evaluate_pipeline=evaluate_pipeline)
+        AsyncEvaluator.defaults = dict(
+            evaluate_pipeline=evaluate_pipeline,
+            diversity=self._diversity,
+            diversity_phi=self._diversity_phi,
+            exist_pipelines=self._exist_pipelines
+        )
 
         self._operator_set.evaluate = partial(
             self._compiler.evaluate_individual,

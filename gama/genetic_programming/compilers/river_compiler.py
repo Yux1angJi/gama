@@ -2,7 +2,9 @@ from datetime import datetime
 import logging
 import os
 import time
-from typing import Callable, Tuple, Optional, Sequence
+from typing import Callable, Tuple, Optional, Sequence, Any, List
+import traceback
+import numpy as np
 
 import stopit
 #from sklearn.base import TransformerMixin, is_classifier
@@ -62,8 +64,67 @@ def object_is_valid_pipeline(o):
         and hasattr(o, "steps")
     )
 
+
+def pipeline_similarity(pipeline, exist_pipelines, dataset, method='cos', phi=0.08):
+    """ Calculate the similarity between pipeline and existing pipelines.
+
+    Returns
+    -------
+    float
+        Similarity score which in [-1, 1] * phi.
+        The higher score means the lower similarity.
+    """
+    if exist_pipelines is None:
+        return 0
+    num_exist_pipelines = len(exist_pipelines)
+
+    if method == 'Q':
+        n = [[[0 for _ in range(num_exist_pipelines)] for _ in range(2)] for _ in range(2)]
+        for a, b in dataset:
+            y_p1 = pipeline.predict_one(a)
+            for idx, exist_pipeline in enumerate(exist_pipelines):
+                y_p2 = exist_pipeline.predict_one(a)
+                i = 1 if y_p1 == b else 0
+                j = 1 if y_p2 == b else 0
+                n[i][j][idx] += 1
+        similarity = 0.0
+        for i in range(num_exist_pipelines):
+            similarity += 1.0 * \
+                (n[1][1][i] * n[0][0][i] - n[1][0][i] * n[0][1][i]) / \
+                (n[1][1][i] * n[0][0][i] + n[1][0][i] * n[0][1][i])
+        similarity = - phi * similarity / num_exist_pipelines
+        return similarity
+
+    elif method == 'cos':
+        similarity = 0.0
+        num_sim = 0
+        for a, b in dataset:
+            y_p1 = pipeline.predict_proba_one(a)
+            for idx, exist_pipeline in enumerate(exist_pipelines):
+                y_p2 = exist_pipeline.predict_proba_one(a)
+                l1 = []
+                l2 = []
+                for k, v in y_p1.items():
+                    l1.append(v)
+                    l2.append(y_p2[k])
+                v1 = np.array(l1)
+                v2 = np.array(l2)
+                numer = np.sum(v1 * v2)
+                denom = np.sqrt(np.sum(v1**2) * np.sum(v2**2))
+                cos_dis = numer / denom
+                if cos_dis < 0.95:
+                    similarity += cos_dis
+                    num_sim += 1
+        if num_sim is not 0:
+            similarity = - phi * similarity / num_sim
+        else:
+            similarity = - phi
+        return similarity
+
+
 def evaluate_pipeline(
     pipeline, x, y_train, timeout: float,metrics: str = 'accuracy', cv=5, subsample=None,
+    diversity: bool = False, diversity_phi: float = 0.05, exist_pipelines: Optional[List[Any]] = None,
 ) -> Tuple:
     """ Score `pipeline` with online holdout evaluation according to `metrics` on (a subsample of) X, y
 
@@ -88,16 +149,20 @@ def evaluate_pipeline(
         try:
             dataset = []
             for a, b in stream.iter_pandas(x, y_train):
-                dataset.append((a,b))
+                dataset.append((a, int(b)))
 
             result = evaluate.progressive_val_score(
-                dataset = dataset,
-                model = pipeline,
-                metric = river_metric,
+                dataset=dataset,
+                model=pipeline,
+                metric=river_metric,
             )
 
-            scores = tuple([result.get()])
-            estimators = river_model
+            if diversity:
+                similarity_score = pipeline_similarity(pipeline, exist_pipelines, dataset[-len(dataset)//10:], phi=diversity_phi)
+            else:
+                similarity_score = 0.0
+            scores = tuple([result.get() + similarity_score, similarity_score])
+            estimators = pipeline
 
             prediction = np.empty(shape=(len(y_train),))
             y_pred = []
@@ -114,6 +179,7 @@ def evaluate_pipeline(
         except KeyboardInterrupt:
             raise
         except Exception as e:
+            traceback.print_exc()
             return prediction, scores, estimators, e
 
     if c_mgr.state == c_mgr.INTERRUPTED:

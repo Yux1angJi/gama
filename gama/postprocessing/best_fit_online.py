@@ -26,8 +26,10 @@ class BestFitOnlinePostProcessing(BasePostProcessing):
         self._selected_individual = selection[0]
         model = self._selected_individual.pipeline
         for i in range(0, len(x)):
-            model = model.learn_one(x.iloc[i].to_dict(), int(y[i]))
-
+            try:
+                model = model.learn_one(x.iloc[i].to_dict(), int(y.iloc[i]))
+            except Exception as e:
+                print(e)
         return model
 
     def to_code(
